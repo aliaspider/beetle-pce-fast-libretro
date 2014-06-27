@@ -1602,6 +1602,12 @@ static void update_input(void)
 
 static uint64_t video_frames, audio_frames;
 
+#ifdef PSP
+#include <psprtc.h>
+#include <pspgu.h>
+#include <pspdisplay.h>
+#endif
+
 void retro_run(void)
 {
    MDFNGI *curgame = (MDFNGI*)game;
@@ -1639,6 +1645,191 @@ void retro_run(void)
       last_sound_rate = spec.SoundRate;
    }
 
+#ifdef PSP
+#define VDC_TEXTURE_SIZE   (512 * 242)
+#define VDC_BG_TEXTURE     (((uint16_t*) 0x04200000) - VDC_TEXTURE_SIZE)
+//#define VDC_SPR_TEXTURE1   (VDC_BG_TEXTURE  - VDC_TEXTURE_SIZE)
+//#define VDC_SPR_TEXTURE2   (VDC_SPR_TEXTURE1 - VDC_TEXTURE_SIZE)
+#define VDC_FRAME_TEXTURE   (((uint16_t*)VDC_BG_TEXTURE) - VDC_TEXTURE_SIZE)
+extern uint16 __attribute__((aligned(16))) color_table_5551[0x220];
+
+typedef struct __attribute__((packed)) psp1_vertex
+{
+   int16_t u,v;
+   uint16_t color;
+   int16_t x,y,z;
+
+} psp1_vertex_t;
+
+typedef struct __attribute__((packed)) psp1_sprite
+{
+   psp1_vertex_t v0;
+   psp1_vertex_t v1;
+
+} psp1_sprite_t;
+
+//   static psp1_sprite_t framecoords_clear       = {{0,0,0x7FFF,0,0,0},{0,0,0x7FFF,512,242,0}};
+//   static psp1_sprite_t framecoords_transparent = {{0,0,0x7FFF,0,0,0},{512,242,0x7FFF,512,242,0}};
+//   static psp1_sprite_t framecoords_opaque      = {{0,0,0xFFFF,0,0,0},{512,242,0xFFFF,512,242,0}};
+   static __attribute__((aligned(64))) psp1_sprite_t framecoords = {{0,0,0xFFFF,0,0,0},{512,242,0xFFFF,512,242,0}};
+
+   static bool firstrun = true;
+   if (firstrun)
+   {
+      printf("first run !\n");
+      firstrun = false;
+      color_table_5551[0x200] = 0x801F;
+      color_table_5551[0x201] = 0x7C00;
+//      memset (VDC_BG_TEXTURE, 0xF0, VDC_TEXTURE_SIZE);
+   }
+   color_table_5551[0x200] = 0x001F;
+   color_table_5551[0x201] = 0xFC00;
+
+   u64 starttime, endtime;
+   sceRtcGetCurrentTick(&starttime);
+   Emulate(&spec);
+
+   int16 *const SoundBuf = spec.SoundBuf + spec.SoundBufSizeALMS * curgame->soundchan;
+   int32 SoundBufSize = spec.SoundBufSize - spec.SoundBufSizeALMS;
+   const int32 SoundBufMaxSize = spec.SoundBufMaxSize - spec.SoundBufSizeALMS;
+
+   spec.SoundBufSize = spec.SoundBufSizeALMS + SoundBufSize;
+
+   unsigned width  = spec.DisplayRect.w & ~0x1;
+   unsigned height = spec.DisplayRect.h;
+
+//   for (int i=0; i<256; i++)
+//   {
+//      color_table_5551[i]=0x801F;
+//      color_table_5551[i]=starttime;
+//   }
+//   for (int i=0; i < VDC_TEXTURE_SIZE; i++)
+//   {
+//      VDC_BG_TEXTURE[i]=i&0xFF;
+//   }
+
+//   framecoords_opaque.v0.x = spec.DisplayRect.x;
+//   framecoords_opaque.v0.y = spec.DisplayRect.y;
+//   framecoords_opaque.v0.u = spec.DisplayRect.x;
+//   framecoords_opaque.v0.v = spec.DisplayRect.y;
+
+//   framecoords_opaque.v1.x = spec.DisplayRect.x + spec.DisplayRect.w;
+//   framecoords_opaque.v1.y = spec.DisplayRect.y + spec.DisplayRect.h;
+//   framecoords_opaque.v1.u = spec.DisplayRect.x + spec.DisplayRect.w;
+//   framecoords_opaque.v1.v = spec.DisplayRect.y + spec.DisplayRect.h;
+
+//   printf (" %u, %u ,%u ,%u \n", spec.DisplayRect.x, spec.DisplayRect.y, spec.DisplayRect.w, spec.DisplayRect.h);
+
+
+   sceKernelDcacheWritebackRange(surf->pixels16, 512*height*2);
+//   sceKernelDcacheWritebackRange(VDC_SPR_TEXTURE1, VDC_TEXTURE_SIZE);
+//   sceKernelDcacheWritebackRange(VDC_SPR_TEXTURE2, VDC_TEXTURE_SIZE);
+   sceKernelDcacheWritebackRange(color_table_5551, 512 * 2 + 32 * 2);
+//   sceKernelDcacheWritebackRange(&framecoords, sizeof(framecoords));
+   static unsigned int __attribute__((aligned(16))) d_list[512];
+
+
+//   sceDisplayWaitVblankStart();
+
+//   printf("%s : 0x%08X \n",(((u32*)((u32)VDC_FRAME_TEXTURE |0x40000000))[10*128+100]&0x80000000)?"alpha present" : "alpha missing" ,((u32*)((u32)VDC_FRAME_TEXTURE |0x40000000))[10*128+100]);
+   sceGuStart(GU_DIRECT, d_list);
+
+//   goto send_frame;
+   sceGuCopyImage(GU_PSM_5551,0,0,512,242,512,surf->pixels16,0,0,512,VDC_BG_TEXTURE);
+//   sceGuTexSync();
+
+   sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+//   sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+
+
+   sceGuScissor(spec.DisplayRect.x,spec.DisplayRect.y,width,height);
+   sceGuEnable(GU_SCISSOR_TEST);
+   sceGuDrawBufferList(GU_PSM_5551, VDC_FRAME_TEXTURE, 512);
+
+   sceGuEnable(GU_TEXTURE_2D);
+
+   sceGuDisable(GU_BLEND);
+   sceGuDisable(GU_DEPTH_TEST);
+
+   sceGuEnable(GU_STENCIL_TEST);
+   sceGuStencilFunc(GU_ALWAYS,0xFF,0xFF);
+   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+
+   sceGuTexMode(GU_PSM_T16, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 512, 256, 512, VDC_BG_TEXTURE);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
+
+   sceGuClutMode(GU_PSM_5551, 0, 0xFF, 0);
+   sceGuClutLoad(32 , color_table_5551 );
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, NULL, (void*)(&framecoords));
+
+//   goto send_frame;
+
+   sceGuStencilFunc(GU_ALWAYS,0,0xFF);
+   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+//   sceGuStencilOp(GU_INVERT,GU_KEEP,GU_KEEP);
+//   sceGuStencilOp(GU_KEEP,GU_INVERT,GU_INVERT);
+//   sceGuStencilOp(GU_REPLACE,GU_KEEP,GU_KEEP);
+
+//   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGBA);
+   sceGuClutMode(GU_PSM_5551, 8, 0x01, 0);
+   sceGuClutLoad(1 , color_table_5551 + 0x200);
+
+   sceGuEnable(GU_COLOR_TEST);
+//   sceGuDisable(GU_COLOR_TEST);
+   sceGuColorFunc(GU_NOTEQUAL, 0xFF, 0xFF);
+
+
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, NULL, (void*)(&framecoords));
+   sceGuDisable(GU_COLOR_TEST);
+
+//   goto send_frame;
+
+   sceGuDisable(GU_COLOR_TEST);
+//   sceGuDisable(GU_STENCIL_TEST);
+   sceGuStencilFunc(GU_EQUAL,0,0xFF);
+//   sceGuStencilFunc(GU_EQUAL,0,0xFFFFFFFF);
+//   sceGuStencilFunc(GU_ALWAYS,1,0xFFFFFFFF);
+
+   sceGuClutMode(GU_PSM_5551, 0, 0xFF, 0);
+   sceGuClutLoad(32 , color_table_5551 + 0x100);
+//   sceGuEnable(GU_BLEND);
+//   sceGuStencilOp(GU_KEEP,GU_KEEP,GU_KEEP);
+//   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+//   sceGuBlendFunc(GU_ADD, GU_ONE_MINUS_DST_ALPHA, GU_DST_ALPHA, 0,0);
+//   sceGuBlendFunc(GU_ADD, GU_DST_ALPHA, GU_ONE_MINUS_DST_ALPHA,0,0);
+//   sceGuBlendFunc(GU_ADD, GU_FIX, GU_DST_ALPHA, 0,0xFFFFFFFF);
+
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, NULL, (void*)(&framecoords));
+
+send_frame:
+   sceGuTexMode(GU_PSM_5551, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 512, 256, 512, VDC_FRAME_TEXTURE);
+
+   sceGuDisable(GU_BLEND);
+   sceGuDisable(GU_STENCIL_TEST);
+   sceGuDisable(GU_COLOR_TEST);
+//   sceGuEnable(GU_SCISSOR_TEST);
+   sceGuScissor(0,0,480,272);
+   sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+
+   sceGuFinish();
+
+   sceRtcGetCurrentTick(&endtime);
+//   sceGuSync(0,0);
+//   sceDisplayWaitVblankStart();
+
+//   printf("frame : %u --> time : %.3f \n", (u32)video_frames , (float)(endtime-starttime)/1000.0 );
+//   if (video_frames == 200)
+//      printf("frame : 200 --> time : %.3f \n", (float)(endtime-starttime)/1000.0 );
+   if ((video_frames > 120) && (video_frames < 130))
+      printf("frame : %u --> time : %.3f \n", (u32)video_frames , (float)(endtime-starttime)/1000.0 );
+//   sceDisplaySetFrameBuf(VDC_FRAME_TEXTURE,512,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
+//   sceDisplaySetFrameBuf(VDC_BG_TEXTURE,512,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
+//   sceDisplaySetFrameBuf(surf->pixels16,512,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
+
+   video_cb(VDC_FRAME_TEXTURE, width, height, FB_WIDTH << 1);
+#else
    Emulate(&spec);
 
    int16 *const SoundBuf = spec.SoundBuf + spec.SoundBufSizeALMS * curgame->soundchan;
@@ -1651,6 +1842,7 @@ void retro_run(void)
    unsigned height = spec.DisplayRect.h;
 
    video_cb(surf->pixels16, width, height, FB_WIDTH << 1);
+#endif
 
    video_frames++;
    audio_frames += spec.SoundBufSize;

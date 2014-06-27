@@ -33,6 +33,10 @@ The spectrum peaked at 15734 Hz.  21477272.727272... / 3 / 15734 = 455.00(CPU cy
 #include "../FileStream.h"
 #include <math.h>
 
+#ifdef PSP
+uint16 __attribute__((aligned(16))) color_table_5551[0x200];
+#endif
+
 namespace PCE_Fast
 {
 
@@ -60,6 +64,58 @@ vce_t vce;
 
 vdc_t *vdc = NULL;
 
+#ifdef PSP
+
+static INLINE uint16_t RGB333_toRGB5551 (uint16_t val)
+{
+   unsigned r = (val& 0x038) >> 3;
+   unsigned g = (val& 0x1c0) >> 6;
+   unsigned b = (val& 0x007);
+   return ((b << 12) | ((b & 0x3) << 10) | (g << 7) | ((g & 0x3) << 5) | (r << 2) | (r & 0x3))|0x8000;
+}
+
+static INLINE void FixPCache(int entry)
+{
+   if (entry & 0xF)  // not color 0x0 of each of the 16-colors palettes
+      color_table_5551[entry] = RGB333_toRGB5551(vce.color_table[entry]);
+
+   if (entry & 0xFF) // not color 0x00 of either BG or Sprite palettes
+      return;
+
+   uint16_t color0 = RGB333_toRGB5551(vce.color_table[entry & 0x100]);
+
+//   if (entry & 0x100)  // make sprite color 0x00 opaque
+//      color0 |= 0x8000;
+
+   for(int x = 0; x < 16; x++)
+     color_table_5551[entry + (x << 4)] = color0 ;
+
+}
+
+//static INLINE void FixPCache(int entry)
+//{
+//   if (entry & 0xF)  // not color 0x0 of each of the 16-colors palettes
+//      color_table_5551[entry] = RGB333_toRGB5551(vce.color_table[entry])|0x8000;
+
+//   if (entry & 0xFF) // not color 0x00 of either BG or Sprite palettes
+//      return;
+
+//   uint16_t color0 = RGB333_toRGB5551(vce.color_table[entry & 0x100]);
+
+//   if (entry & 0x100)  // make sprite color 0x00 opaque
+//      color0 |= 0x8000;
+
+////   color0 |= 0xFFFF;
+////   color0 &= 0x7FFF;
+////   for(int x = 0; x < 16; x++)
+//   for(int x = 0; x < 15; x++) // use 0x0F0 and 0x1F0 to mark GB/sprite pixels as transparent
+//     color_table_5551[entry + (x << 4)] = color0 ;
+
+//   color_table_5551[0x0F0] = 0x7FFF;
+
+////   color_table_5551[entry] = color0 & 0x7FFF;
+//}
+#else
 #define MAKECOLOR_PCE(val) ((((val & 0x038) >> 3) << 13)|(((((val & 0x038) >> 3) & 0x6) << 10) | (((val & 0x1c0) >> 6) << 8) | (((val & 0x1c0) >> 6) << 5) | ((val & 0x007) << 2) | ((val & 0x007) >> 1)))
 
 static INLINE void FixPCache(int entry)
@@ -75,6 +131,7 @@ static INLINE void FixPCache(int entry)
    if(entry & 0xF)
       vce.color_table_cache[entry] = MAKECOLOR_PCE(vce.color_table[entry]);
 }
+#endif
 
 static INLINE void FixTileCache(vdc_t *which_vdc, uint16 A)
 {
@@ -485,7 +542,7 @@ static void DrawBG(const vdc_t *vdc, const uint32 count, uint8 *target)
   const uint16 *BAT_Base = &vdc->VRAM[bat_y];
   const uint64 *CG_Base = &vdc->bg_tile_cache[0][line_sub];
 
-  uint64 cg_mask = 0xFFFFFFFFFFFFFFFFFFF;
+  uint64 cg_mask = 0xFFFFFFFFFFFFFFFFULL;
 
   if((vdc->MWR & 0x3) == 0x3)
    cg_mask = (vdc->MWR & 0x80) ? 0xCCCCCCCCCCCCCCCCULL : 0x3333333333333333ULL;
@@ -657,7 +714,7 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint16 *spr_linebuf)
  //if(!active_sprites)
  // return;
 
- //memset(spr_linebuf, 0, sizeof(uint16) * end);
+// memset(spr_linebuf, 0, sizeof(uint16) * end);
  MDFN_FastU32MemsetM8((uint32 *)spr_linebuf, 0, ((end + 3) >> 1) & ~1);
 
  if(!active_sprites)
@@ -733,6 +790,90 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint16 *spr_linebuf)
  }
 }
 
+#ifdef PSP
+
+//#define VDC_TEXTURE_SIZE   (512 * 242)
+//#define VDC_BG_TEXTURE     (((uint8_t*) 0x04200000) - VDC_TEXTURE_SIZE)
+//#define VDC_SPR_TEXTURE1   (VDC_BG_TEXTURE  - VDC_TEXTURE_SIZE)
+//#define VDC_SPR_TEXTURE2   (VDC_SPR_TEXTURE1 - VDC_TEXTURE_SIZE)
+
+static INLINE void MixBGSPR(const uint32 count_in, const uint8 *bg_linebuf_in, const uint16 *spr_linebuf_in, uint16_t *target_in)
+{
+//   return;
+ for(unsigned int x = 0; x < count_in; x++)
+ {
+  const uint32 bg_pixel = bg_linebuf_in[x];
+  const uint32 spr_pixel = spr_linebuf_in[x];
+  uint32 pixel = bg_pixel;
+
+  if ((spr_pixel & SPR_HPMASK) || !(bg_pixel & 0x0F))
+     pixel = spr_pixel;
+
+  target_in[x] = pixel & 0x1FF;
+ }
+}
+
+//static INLINE void MixBGSPR(const uint32 count_in, const uint8 *bg_linebuf_in, const uint16 *spr_linebuf_in, uint16_t *target_in)
+//{
+// for(unsigned int x = 0; x < count_in; x++)
+// {
+//  const uint32 bg_pixel = bg_linebuf_in[x];
+//  const uint32 spr_pixel = spr_linebuf_in[x];
+
+//  if ((spr_pixel & SPR_HPMASK) || !(bg_pixel & 0x0F))
+//     target_in[x] = spr_pixel;
+//  else
+//     target_in[x] = bg_pixel;
+// }
+//}
+
+static void MixBGOnly(const uint32 count, const uint8 *bg_linebuf, uint16_t *target)
+{
+//   printf("MixBGOnly \n");
+ for(unsigned int x = 0; x < count; x++)
+  target[x] = bg_linebuf[x];
+}
+
+static void MixSPROnly(const uint32 count, const uint16 *spr_linebuf, uint16_t *target)
+{
+//   printf("MixSPROnly \n");
+ for(unsigned int x = 0; x < count; x++)
+  target[x] = (spr_linebuf[x] | 0x100) & 0x1FF;
+}
+
+static void MixNone(const uint32 count, uint16_t *target)
+{
+//   printf("MixNone \n");
+ uint32 bg_color = 0x000;
+
+ for(unsigned int x = 0; x < count; x++)
+  target[x] = bg_color;
+}
+
+void DrawOverscan(const vdc_t *vdc, uint16_t *target, const MDFN_Rect *lw, const bool full = true, const int32 vpl = 0, const int32 vpr = 0)
+{
+   return;
+//   printf("DrawOverscan \n");
+
+// uint32 os_color = color_table_5551[0x100];
+
+ //printf("%d %d\n", lw->x, lw->w);
+ int x = lw->x;
+
+ if(!full)
+ {
+    for(; x < vpl; x++)
+       target[x] = 0x100;
+
+    x = vpr;
+ }
+
+ for(; x < lw->x + lw->w; x++)
+    target[x] = 0x100;
+}
+
+
+#else
 static INLINE void MixBGSPR(const uint32 count_in, const uint8 *bg_linebuf_in, const uint16 *spr_linebuf_in, uint16_t *target_in)
 {   
  for(unsigned int x = 0; x < count_in; x++)
@@ -786,6 +927,8 @@ void DrawOverscan(const vdc_t *vdc, uint16_t *target, const MDFN_Rect *lw, const
  for(; x < lw->x + lw->w; x++)
     target[x] = os_color;
 }
+
+#endif
 
 void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
 {
@@ -932,10 +1075,10 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
   chip = 0;
   {
    MDFN_ALIGN(8) uint8 bg_linebuf[8 + 1024];
-   MDFN_ALIGN(8) uint16 spr_linebuf[16 + 1024];
+//   MDFN_ALIGN(8) uint16 spr_linebuf[16 + 1024];
    
    uint16 *target_ptr16 = surface->pixels16 + (frame_counter - 14) * surface->pitchinpix;
-
+   uint16 *spr_linebuf = target_ptr16;
    if(fc_vrm && !skip)
     LineWidths[frame_counter - 14] = DisplayRect->w;
 
@@ -1005,6 +1148,25 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
       {
        //else if(target_ptr16)
          {
+#ifdef PSP
+            switch(vdc->CR & 0xC0)
+            {
+               case 0xC0:
+//                  memcpy(target_ptr16 + target_offset, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, width);
+//                  memcpy(target_ptr16 + target_offset, spr_linebuf + 0x20 + source_offset, width*2);
+//                  MixBGSPR(width, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, spr_linebuf + 0x20 + source_offset, target_ptr16 + target_offset);
+                  break;
+               case 0x80:
+                  MixBGOnly(width, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, target_ptr16 + target_offset);
+                  break;
+               case 0x40:
+                  MixSPROnly(width, spr_linebuf + 0x20 + source_offset, target_ptr16 + target_offset);
+                  break;
+               case 0x00:
+                  MixNone(width, target_ptr16 + target_offset);
+                  break;
+            }
+#else
             switch(vdc->CR & 0xC0)
             {
                case 0xC0:
@@ -1020,6 +1182,7 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
                   MixNone(width, target_ptr16 + target_offset);
                   break;
             }
+#endif
          }
       }
 
