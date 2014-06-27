@@ -681,16 +681,9 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
       }
    }
 
-   //if(!active_sprites)
-   // return;
-
-
-   static unsigned spr_hit_buffer [VDC_TEXTURE_WIDTH + 0x20];
-   static unsigned *spr_hit = spr_hit_buffer - 0x20;
-   memset(spr_hit_buffer, 0, (end + 0x20) * sizeof(unsigned));
 
    memset(spr_linebuf, 0, end);
-//   MDFN_FastU32MemsetM8((uint32 *)spr_linebuf, 0, ((end + 3) >> 1) & ~1);
+   memset(spr_linebuf + 512, 0, end);
 
    if(!active_sprites)
       return;
@@ -698,16 +691,12 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
    for(int i = (active_sprites - 1) ; i >= 0; i--)
    {
       int32 pos = SpriteList[i].x - 0x20;
-      uint8 pal_or;
       uint8 *dest_pix;
 
       if(pos > end)
          continue;
 
       dest_pix = &spr_linebuf[pos];
-
-      //  prio_or = 0x100 | SpriteList[i].palette_index;
-      pal_or = SpriteList[i].palette_index;
 
       //  if(SpriteList[i].flags & SPRF_PRIORITY)
       //   prio_or |= SPR_HPMASK;
@@ -732,14 +721,16 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
                if(((uint32)pos + x) >= (uint32)end) // Covers negative and overflowing the right side(to prevent spurious sprite hits)
                   continue;
 
-               if(spr_hit[x])
+//               if(spr_hit[x])
+               if(dest_pix[x + 512])
                {
                   vdc->status |= VDCS_CR;
                   VDC_DEBUG("Sprite hit IRQ");
                   HuC6280_IRQBegin(MDFN_IQIRQ1);
                }
-               dest_pix[x] = raw_pixel | pal_or;
-               spr_hit[x] = 1;
+               dest_pix[x] = raw_pixel | SpriteList[i].palette_index;
+               dest_pix[x + 512] = 1;
+//               spr_hit[x] = 1;
             }
          }
       } // End sprite0 handling
@@ -760,8 +751,8 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
          {
             const uint32 raw_pixel = pix_source[x_second];
             if(raw_pixel)
-               dest_pix[x] = raw_pixel | pal_or;
-               spr_hit[x] = 1;
+               dest_pix[x] = raw_pixel | SpriteList[i].palette_index;
+//               spr_hit[x] = 1;
          }
 
       } // End no sprite0 hit
