@@ -42,8 +42,13 @@ CORE_SOURCES := $(CORE_DIR)/huc6280.cpp \
 	$(CORE_DIR)/input.cpp \
 	$(CORE_DIR)/pcecd.cpp \
 	$(CORE_DIR)/pcecd_drive.cpp \
-	$(CORE_DIR)/psg.cpp \
-	$(CORE_DIR)/vdc.cpp
+	$(CORE_DIR)/psg.cpp
+
+ifeq ($(platform), psp1)
+	CORE_SOURCES += $(CORE_DIR)/vdc_psp.cpp
+else
+	CORE_SOURCES += $(CORE_DIR)/vdc.cpp
+endif
 
 ifeq ($(HAVE_HES),1)
 CORE_SOURCES += $(CORE_DIR)/hes.cpp
@@ -312,7 +317,7 @@ all: $(TARGET)
 ifeq ($(DEBUG),0)
    FLAGS += -O2 $(EXTRA_GCC_FLAGS)
 else
-   FLAGS += -O0
+   FLAGS += -O0 -g
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
