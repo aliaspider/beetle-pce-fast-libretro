@@ -1386,9 +1386,15 @@ void retro_init(void)
 	  retro_save_directory = retro_base_directory;
    }      
 
+#ifdef PSP
+   enum retro_pixel_format rgb1555 = RETRO_PIXEL_FORMAT_0RGB1555;
+   if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &rgb1555) && log_cb)
+      log_cb(RETRO_LOG_INFO, "Frontend supports XRGB1555.\n");
+#else
    enum retro_pixel_format rgb565 = RETRO_PIXEL_FORMAT_RGB565;
    if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &rgb565) && log_cb)
       log_cb(RETRO_LOG_INFO, "Frontend supports RGB565 - will use that instead of XRGB1555.\n");
+#endif
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_PERF_INTERFACE, &perf_cb))
       perf_get_cpu_features_cb = perf_cb.get_cpu_features;
@@ -1619,6 +1625,10 @@ static void update_input(void)
 
 static uint64_t video_frames, audio_frames;
 
+#ifdef PSP
+#include <psprtc.h>
+#endif
+
 void retro_run(void)
 {
    MDFNGI *curgame = (MDFNGI*)game;
@@ -1655,8 +1665,30 @@ void retro_run(void)
       spec.SoundFormatChanged = true;
       last_sound_rate = spec.SoundRate;
    }
+#ifdef PSP
+   u64 starttime, endtime;
+   static u64 totalTime = 0;
+   static u64 startFrame = 0;
+   if (video_frames == 60){
+      startFrame = video_frames;
+      totalTime = 0;
+   }
+
+   sceRtcGetCurrentTick(&starttime);
 
    Emulate(&spec);
+
+   sceRtcGetCurrentTick(&endtime);
+
+//   printf("frame : %u , time --> = %.3fms \n", (u32)video_frames, (float)(endtime - starttime) / 1000.0 );
+
+   totalTime += (endtime - starttime);
+   if (video_frames == 300)
+       printf("frame 200 reached , average frame time = %.3fms \n", (float)(totalTime)/((video_frames + 1 - startFrame ) * 1000.0) );
+
+#else
+   Emulate(&spec);
+#endif
 
    int16 *const SoundBuf = spec.SoundBuf + spec.SoundBufSizeALMS * curgame->soundchan;
    int32 SoundBufSize = spec.SoundBufSize - spec.SoundBufSizeALMS;
@@ -1667,7 +1699,11 @@ void retro_run(void)
    unsigned width  = spec.DisplayRect.w & ~0x1;
    unsigned height = spec.DisplayRect.h;
 
+#ifdef PSP
+//   video_cb(RETRO_HW_FRAME_BUFFER_VALID, width, height, FB_WIDTH << 1);
+#else
    video_cb(surf->pixels16, width, height, FB_WIDTH << 1);
+#endif
 
    video_frames++;
    audio_frames += spec.SoundBufSize;

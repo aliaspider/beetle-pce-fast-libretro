@@ -42,8 +42,12 @@
 #ifdef PSP
 #include <pspkernel.h>
 #include <pspgu.h>
+#include <pspdisplay.h>
+
 #define PSP_VRAM_TOP       ((void*)0x04200000)
-#define VDC_TEXTURE_SIZE   (512 * 242)
+#define VDC_TEXTURE_WIDTH  (512)
+#define VDC_TEXTURE_HEIGHT (242)
+#define VDC_TEXTURE_SIZE   (VDC_TEXTURE_WIDTH * VDC_TEXTURE_HEIGHT)
 #define VDC_BG_TEXTURE     (((uint8_t*)PSP_VRAM_TOP)     - VDC_TEXTURE_SIZE)
 #define VDC_SPR_TEXTURE    (((uint8_t*)VDC_BG_TEXTURE)   - VDC_TEXTURE_SIZE)
 #define VDC_FRAME_TEXTURE  (((uint16_t*)VDC_SPR_TEXTURE) - VDC_TEXTURE_SIZE)
