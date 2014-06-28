@@ -1165,8 +1165,8 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
    // HW_RENDER
 
 
-//   update_coords(0, os_framecoords, color_table_5551[0x100]);
-   update_coords(0, os_framecoords, 0x801F);
+   update_coords(0, os_framecoords, color_table_5551[0x100]);
+//   update_coords(0, os_framecoords, 0x801F);
 //   update_coords(0, os_framecoords, 0xFFFF);
 
    update_coords(target_offset - source_offset - 0x20, spr_framecoords);
@@ -1249,25 +1249,10 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
 
 //   goto send_frame;
 
-   sceGuClutMode(GU_PSM_5551, 0, 0xF, 0);
-   sceGuClutLoad(2 , color_table_5551 + 0x200);
-
-   sceGuEnable(GU_COLOR_TEST);
-   sceGuColorFunc(GU_EQUAL, 0xFF, 0xFF);
-   sceGuStencilFunc(GU_ALWAYS,0x00,0xFF);
-   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
-
-   sceGuEnable(GU_BLEND);
-   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0xFFFFFFFF);
-
-   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&bg_framecoords));
-
-//   goto send_frame;
-
    sceGuTexMode(GU_PSM_T16, 0, 0, GU_FALSE);
    sceGuTexImage(0, 512, 256, 512, VDC_SPR_TEXTURE);
 
-   sceGuClutMode(GU_PSM_5551, 8, 0x3, 0);
+   sceGuClutMode(GU_PSM_5551, 8, 0x1, 0);
    sceGuClutLoad(2 , color_table_5551 + 0x200);
 
    sceGuEnable(GU_COLOR_TEST);
@@ -1276,9 +1261,46 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
    sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
 
    sceGuEnable(GU_BLEND);
+//   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0xFFFFFFFF);
    sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0x0);
 
    sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&spr_framecoords));
+
+//      goto send_frame;
+
+//   sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
+//   sceGuTexImage(0, 512, 256, 512, VDC_BG_TEXTURE);
+
+//   sceGuClutMode(GU_PSM_5551, 0, 0xF, 0);
+//   sceGuClutLoad(2 , color_table_5551 + 0x200);
+
+//   sceGuEnable(GU_COLOR_TEST);
+//   sceGuColorFunc(GU_EQUAL, 0xFF, 0xFF);
+//   sceGuStencilFunc(GU_ALWAYS,0x00,0xFF);
+//   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+
+//   sceGuEnable(GU_BLEND);
+//   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0xFFFFFFFF);
+
+//   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&bg_framecoords));
+
+//   goto send_frame;
+
+//   sceGuTexMode(GU_PSM_T16, 0, 0, GU_FALSE);
+//   sceGuTexImage(0, 512, 256, 512, VDC_SPR_TEXTURE);
+
+//   sceGuClutMode(GU_PSM_5551, 8, 0x3, 0);
+//   sceGuClutLoad(2 , color_table_5551 + 0x200);
+
+//   sceGuEnable(GU_COLOR_TEST);
+//   sceGuColorFunc(GU_NOTEQUAL, 0xFF, 0xFF);
+//   sceGuStencilFunc(GU_ALWAYS,0x00,0xFF);
+//   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+
+//   sceGuEnable(GU_BLEND);
+//   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0x0);
+
+//   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&spr_framecoords));
 
 //   goto send_frame;
 
