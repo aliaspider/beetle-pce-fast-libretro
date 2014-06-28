@@ -84,14 +84,14 @@ static inline int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 static inline int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
 //   return sceKernelWaitSema(*mutex, 1, 0);
    return 1;
 }
 
 static inline int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
@@ -107,43 +107,43 @@ static inline int pthread_join(pthread_t thread, void **retval)
 
 static inline int pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
 static inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex)
 {
-   sceKernelDelayThread(1);
+   sceKernelDelayThread(10000);
    return 1;
 }
 
 static inline int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
 static inline int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
 static inline int pthread_cond_signal(pthread_cond_t *cond)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
 static inline int pthread_cond_broadcast(pthread_cond_t *cond)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
 static inline int pthread_cond_destroy(pthread_cond_t *cond)
 {
-   sceKernelDelayThread(1);
+//   sceKernelDelayThread(1);
    return 1;
 }
 
