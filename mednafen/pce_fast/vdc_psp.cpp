@@ -49,8 +49,41 @@ typedef struct __attribute__((packed)) psp1_sprite
 } psp1_sprite_t;
 
 static uint16 __attribute__((aligned(16))) color_table_5551[0x220];
-static __attribute__((aligned(16))) psp1_sprite_t framecoords = {{0,0,0xFFFF,0,0,0},{512,242,0xFFFF,512,242,0}};
+//static __attribute__((aligned(16))) psp1_sprite_t bg_framecoords = {{0,0,0xFFFF,0,0,0},{512,242,0xFFFF,512,242,0}};
+//static __attribute__((aligned(16))) psp1_sprite_t spr_framecoords = {{0,0,0xFFFF,0,0,0},{512,242,0xFFFF,512,242,0}};
+#define VDC_FRAME_SLICE_SIZE     64
+#define VDC_FRAME_SLICE_COUNT    (VDC_TEXTURE_WIDTH / VDC_FRAME_SLICE_SIZE)
+static __attribute__((aligned(16))) psp1_sprite_t bg_framecoords[VDC_FRAME_SLICE_COUNT];
+static __attribute__((aligned(16))) psp1_sprite_t spr_framecoords[VDC_FRAME_SLICE_COUNT];
+static __attribute__((aligned(16))) psp1_sprite_t os_framecoords[VDC_FRAME_SLICE_COUNT];
+
 static unsigned int __attribute__((aligned(16))) d_list[512];
+static uint8_t* bg_texture_buffer = NULL;
+static uint16_t* spr_texture_buffer = NULL;
+
+static void update_coords( int offset, psp1_sprite_t* framecoords, uint16_t color = 0xFFFF)
+{
+   int x=offset;
+   int u=0;
+   for (int i=0; i < VDC_FRAME_SLICE_COUNT; i++)
+   {
+      framecoords[i].v0.x=x;
+      framecoords[i].v0.y=0;
+      framecoords[i].v0.u=u;
+      framecoords[i].v0.v=0;
+      framecoords[i].v0.color=color;
+
+      x+=VDC_FRAME_SLICE_SIZE;
+      u+=VDC_FRAME_SLICE_SIZE;
+
+      framecoords[i].v1.x=x;
+      framecoords[i].v1.y=VDC_TEXTURE_HEIGHT;
+      framecoords[i].v1.u=u;
+      framecoords[i].v1.v=VDC_TEXTURE_HEIGHT;
+      framecoords[i].v1.color=color;
+   }
+   sceKernelDcacheWritebackRange(framecoords, sizeof(psp1_sprite_t) * VDC_FRAME_SLICE_COUNT);
+}
 
 namespace PCE_Fast
 {
@@ -91,16 +124,20 @@ static INLINE uint16_t RGB333_toRGB5551 (uint16_t val)
 
 static INLINE void FixPCache(int entry)
 {
-   if(!(entry & 0xFF))
-   {
-      uint16_t color0 = RGB333_toRGB5551(vce.color_table[entry & 0x100]);
-      for(int x = 0; x < 16; x++)
-         color_table_5551[entry + (x << 4)] = color0 ;
-      return;
-   }
-
-   if(entry & 0xF)
+   if (entry & 0xF)  // not color 0x0 of each of the 16-colors palettes
       color_table_5551[entry] = RGB333_toRGB5551(vce.color_table[entry]);
+
+   if (entry & 0xFF) // not color 0x00 of either BG or Sprite palettes
+      return;
+
+   uint16_t color0 = RGB333_toRGB5551(vce.color_table[entry & 0x100]);
+
+   if (!(entry & 0x100))  // make bg color 0x00 transparent
+      color0 &= 0x7FFF;
+
+   for(int x = 0; x < 16; x++)
+     color_table_5551[entry + (x << 4)] = color0;
+
 }
 
 static INLINE void FixTileCache(vdc_t *which_vdc, uint16 A)
@@ -336,7 +373,7 @@ static void DoDMA(vdc_t *vdc)
 DECLFW(VDC_Write)
 {
    int msb = A & 1;
-   int chip = 0;
+//   int chip = 0;
 
    {
       A &= 0x3;
@@ -620,11 +657,11 @@ typedef struct
    uint16 sub_y;
 } SPRLE;
 
-#define SPR_HPMASK  0x8000	// High priority bit mask
+#define SPR_HPMASK  0x0200	// High priority bit mask
 
 // DrawSprites will write up to 0x20 units before the start of the pointer it's passed.
-static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf) NO_INLINE;
-static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
+static void DrawSprites(const int32 end, uint16 *spr_linebuf) NO_INLINE;
+static void DrawSprites(const int32 end, uint16 *spr_linebuf)
 {
    int active_sprites = 0;
    SPRLE SpriteList[64 * 2]; // (see unlimited_sprites option, *2 to accomodate 32-pixel-width sprites ) //16];
@@ -681,9 +718,11 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
       }
    }
 
+   //if(!active_sprites)
+   // return;
 
-   memset(spr_linebuf, 0, end);
-   memset(spr_linebuf + 512, 0, end);
+//   memset(spr_linebuf, 0, sizeof(uint16) * end);
+   MDFN_FastU32MemsetM8((uint32 *)spr_linebuf, 0, ((end + 3) >> 1) & ~1);
 
    if(!active_sprites)
       return;
@@ -691,15 +730,18 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
    for(int i = (active_sprites - 1) ; i >= 0; i--)
    {
       int32 pos = SpriteList[i].x - 0x20;
-      uint8 *dest_pix;
+      uint32 prio_or;
+      uint16 *dest_pix;
 
       if(pos > end)
          continue;
 
       dest_pix = &spr_linebuf[pos];
 
-      //  if(SpriteList[i].flags & SPRF_PRIORITY)
-      //   prio_or |= SPR_HPMASK;
+      prio_or = 0x100 | SpriteList[i].palette_index;
+
+      if(SpriteList[i].flags & SPRF_PRIORITY)
+         prio_or |= SPR_HPMASK;
 
       if((SpriteList[i].flags & SPRF_SPRITE0) && (vdc->CR & 0x01))
       {
@@ -715,22 +757,19 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
 
          for(int32 x = 0; x < 16; x++, x_second += increment)
          {
-            const uint8 raw_pixel = pix_source[x_second];
+            const uint32 raw_pixel = pix_source[x_second];
             if(raw_pixel)
             {
                if(((uint32)pos + x) >= (uint32)end) // Covers negative and overflowing the right side(to prevent spurious sprite hits)
                   continue;
 
-//               if(spr_hit[x])
-               if(dest_pix[x + 512])
+               if(dest_pix[x] & 0x100)
                {
                   vdc->status |= VDCS_CR;
                   VDC_DEBUG("Sprite hit IRQ");
                   HuC6280_IRQBegin(MDFN_IQIRQ1);
                }
-               dest_pix[x] = raw_pixel | SpriteList[i].palette_index;
-               dest_pix[x + 512] = 1;
-//               spr_hit[x] = 1;
+               dest_pix[x] = raw_pixel | prio_or;
             }
          }
       } // End sprite0 handling
@@ -751,15 +790,14 @@ static void DrawSprites(vdc_t *vdc, const int32 end, uint8 *spr_linebuf)
          {
             const uint32 raw_pixel = pix_source[x_second];
             if(raw_pixel)
-               dest_pix[x] = raw_pixel | SpriteList[i].palette_index;
-//               spr_hit[x] = 1;
+               dest_pix[x] = raw_pixel | prio_or;
          }
 
       } // End no sprite0 hit
    }
 }
 
-static INLINE void MixBGSPR(const uint32 count_in, const uint8 *bg_linebuf_in, const uint16 *spr_linebuf_in, uint16_t *target_in)
+static INLINE void MixBGSPR(const uint32 count_in, const uint8 *bg_linebuf_in, const uint8 *spr_linebuf_in, uint16_t *target_in)
 {   
    for(unsigned int x = 0; x < count_in; x++)
    {
@@ -780,7 +818,7 @@ static void MixBGOnly(const uint32 count, const uint8 *bg_linebuf, uint16_t *tar
       target[x] = color_table_5551[bg_linebuf[x]];
 }
 
-static void MixSPROnly(const uint32 count, const uint8 *spr_linebuf, uint16_t *target)
+static void MixSPROnly(const uint32 count, const uint16 *spr_linebuf, uint16_t *target)
 {
    for(unsigned int x = 0; x < count; x++)
       target[x] = color_table_5551[(spr_linebuf[x] | 0x100) & 0x1FF];
@@ -821,6 +859,8 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
    MDFN_Rect *DisplayRect = &espec->DisplayRect;
    int32 *LineWidths = espec->LineWidths;
    bool skip = espec->skip || IsHES;
+
+   int32 width, source_offset,target_offset;
 
    // x and w should be overwritten in the big loop
 
@@ -909,7 +949,7 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
          DisplayRect->w = ws[correct_aspect][vce.dot_clock];
       }
 
-      int chip = 0;
+//      int chip = 0;
       {
          if(frame_counter == 0)
          {
@@ -956,13 +996,16 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
 
       const bool fc_vrm = (frame_counter >= 14 && frame_counter < (14 + 242));
 
-      chip = 0;
+//      chip = 0;
       {
-         //   MDFN_ALIGN(8) uint8 bg_linebuf[8 + 1024];
-         //   MDFN_ALIGN(8) uint16 spr_linebuf[16 + 1024];
+            MDFN_ALIGN(8) uint8 bg_linebuf[8 + 1024];
+//            MDFN_ALIGN(8) uint16 spr_linebuf[16 + 1024];
 
-         uint8_t* bg_linebuf = VDC_BG_TEXTURE + (frame_counter - 14) * 512;
-         uint8_t* spr_linebuf = VDC_SPR_TEXTURE + (frame_counter - 14) * 512;
+         uint8_t* bg_linebuf_vram = VDC_BG_TEXTURE + (frame_counter - 14) * 512;
+//         uint16_t* spr_linebuf = VDC_SPR_TEXTURE + (frame_counter - 14) * 512;
+
+//         uint8_t* bg_linebuf = bg_texture_buffer + (frame_counter - 14) * 512;
+         uint16_t* spr_linebuf = spr_texture_buffer + (frame_counter - 14) * 512;
 
          uint16 *target_ptr16 = surface->pixels16 + (frame_counter - 14) * surface->pitchinpix;
 
@@ -1001,10 +1044,10 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
                if((vdc->CR & 0x40) && (SHOULD_DRAW || (vdc->CR & 0x03)))	// Don't skip sprite drawing if we can generate sprite #0 or sprite overflow IRQs.
                {
                   if((userle & (ULE_SPR0)) || (vdc->CR & 0x03))
-                     DrawSprites(vdc, end - start, spr_linebuf + 0x20);
+                     DrawSprites(end - start, spr_linebuf + 0x20);
 
                   if(!(userle & (ULE_SPR0)))
-                     memset(spr_linebuf + 0x20, 0, sizeof(uint16) * (end - start));
+                     memset(spr_linebuf + 0x20, 0, (end - start));
                }
 
                if(SHOULD_DRAW)
@@ -1014,9 +1057,9 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
                      { 24,      38, 96 }
                   };
 
-                  int32 width = end - start;
-                  int32 source_offset = 0;
-                  int32 target_offset = start - (128 + 8 + xs[correct_aspect][vce.dot_clock]);
+                  width = end - start;
+                  source_offset = 0;
+                  target_offset = start - (128 + 8 + xs[correct_aspect][vce.dot_clock]);
 
                   if(target_offset < 0)
                   {
@@ -1039,6 +1082,7 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
                         {
                         case 0xC0:
                            //                  MixBGSPR(width, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, spr_linebuf + 0x20 + source_offset, target_ptr16 + target_offset);
+                           memcpy(bg_linebuf_vram, bg_linebuf + (vdc->BG_XOffset & 7), width);
                            break;
                         case 0x80:
                            MixBGOnly(width, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, target_ptr16 + target_offset);
@@ -1121,12 +1165,24 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
    // HW_RENDER
 
 
+//   update_coords(0, os_framecoords, color_table_5551[0x100]);
+   update_coords(0, os_framecoords, 0x801F);
+//   update_coords(0, os_framecoords, 0xFFFF);
+
+   update_coords(target_offset - source_offset - 0x20, spr_framecoords);
+   update_coords(target_offset-source_offset, bg_framecoords);
 
 
    sceKernelDcacheWritebackRange(VDC_BG_TEXTURE, VDC_TEXTURE_SIZE);
-   sceKernelDcacheWritebackRange(VDC_SPR_TEXTURE, VDC_TEXTURE_SIZE);
+//   sceKernelDcacheWritebackRange(VDC_SPR_TEXTURE, VDC_TEXTURE_SIZE * sizeof(uint16_t));
+
+//   sceKernelDcacheWritebackRange(bg_texture_buffer, VDC_TEXTURE_SIZE);
+   sceKernelDcacheWritebackRange(spr_texture_buffer, VDC_TEXTURE_SIZE * sizeof(uint16_t));
+
    sceKernelDcacheWritebackRange(color_table_5551, sizeof(color_table_5551));
 
+
+//   update_coords(0x20 - (vdc->BG_XOffset & 7), bg_framecoords);
 
    //    unsigned width  = spec.DisplayRect.w & ~0x1;
    //    unsigned height = spec.DisplayRect.h;
@@ -1134,10 +1190,36 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
 
 
 
+//      sceGuSync(0,0);
    sceGuStart(GU_DIRECT, d_list);
    sceGuDrawBufferList(GU_PSM_5551, VDC_FRAME_TEXTURE, 512);
+   sceGuScissor(DisplayRect->x, DisplayRect->y, DisplayRect->x + DisplayRect->w, DisplayRect->y + DisplayRect->h);
+   sceGuEnable(GU_SCISSOR_TEST);
 
-   //   goto send_frame;
+//   sceGuClearColor(0XFFFFffff);
+//   sceGuClear(GU_COLOR_BUFFER_BIT);
+//   sceGuDisable(GU_BLEND);
+   sceGuDisable(GU_TEXTURE_2D);
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&os_framecoords));
+   sceGuEnable(GU_TEXTURE_2D);
+
+
+//   sceGuClearColor(0XFFFFffff);
+//   sceGuClear(GU_COLOR_BUFFER_BIT|GU_FAST_CLEAR_BIT);
+
+
+
+   if(vdc->burst_mode)
+      goto send_frame;
+//else if(vdc->display_counter >= (VDS + VSW) && vdc->display_counter < (VDS + VSW + VDW + 1))
+//   sceGuScissor(target_offset, (VDS + VSW) , target_offset + width, (VDS + VSW + VDW));
+   sceGuScissor(target_offset, DisplayRect->y , target_offset + width, DisplayRect->y + DisplayRect->h);
+
+   //                  MixBGSPR(width, bg_linebuf + (vdc->BG_XOffset & 7) + source_offset, spr_linebuf + 0x20 + source_offset, target_ptr16 + target_offset);
+//   sceGuCopyImage(GU_PSM_T16,0,0,VDC_TEXTURE_WIDTH / 2,VDC_TEXTURE_HEIGHT,VDC_TEXTURE_WIDTH / 2, bg_texture_buffer, 0, 0, VDC_TEXTURE_WIDTH / 2,VDC_BG_TEXTURE);
+   sceGuCopyImage(GU_PSM_5551,0,0,VDC_TEXTURE_WIDTH,VDC_TEXTURE_HEIGHT,VDC_TEXTURE_WIDTH, spr_texture_buffer, 0x0, 0,VDC_TEXTURE_WIDTH,VDC_SPR_TEXTURE);
+   sceGuTexSync();
+//      goto send_frame;
    //   sceGuCopyImage(GU_PSM_5551,0,0,VDC_TEXTURE_WIDTH,VDC_TEXTURE_HEIGHT,VDC_TEXTURE_WIDTH,surf->bg_pixels,0,0,VDC_TEXTURE_WIDTH,VDC_BG_TEXTURE);
    //   sceGuTexSync();
 
@@ -1153,9 +1235,9 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
    sceGuDisable(GU_BLEND);
    sceGuDisable(GU_DEPTH_TEST);
 
-   //    sceGuEnable(GU_STENCIL_TEST);
-   //    sceGuStencilFunc(GU_ALWAYS,0xFF,0xFF);
-   //    sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+   sceGuEnable(GU_STENCIL_TEST);
+   sceGuStencilFunc(GU_ALWAYS,0xFF,0xFF);
+   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
 
    sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
    sceGuTexImage(0, 512, 256, 512, VDC_BG_TEXTURE);
@@ -1163,7 +1245,60 @@ void VDC_RunFrame(EmulateSpecStruct *espec, bool IsHES)
 
    sceGuClutMode(GU_PSM_5551, 0, 0xFF, 0);
    sceGuClutLoad(32 , color_table_5551);
-   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, NULL, (void*)(&framecoords));
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&bg_framecoords));
+
+//   goto send_frame;
+
+   sceGuClutMode(GU_PSM_5551, 0, 0xF, 0);
+   sceGuClutLoad(2 , color_table_5551 + 0x200);
+
+   sceGuEnable(GU_COLOR_TEST);
+   sceGuColorFunc(GU_EQUAL, 0xFF, 0xFF);
+   sceGuStencilFunc(GU_ALWAYS,0x00,0xFF);
+   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+
+   sceGuEnable(GU_BLEND);
+   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0xFFFFFFFF);
+
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&bg_framecoords));
+
+//   goto send_frame;
+
+   sceGuTexMode(GU_PSM_T16, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 512, 256, 512, VDC_SPR_TEXTURE);
+
+   sceGuClutMode(GU_PSM_5551, 8, 0x3, 0);
+   sceGuClutLoad(2 , color_table_5551 + 0x200);
+
+   sceGuEnable(GU_COLOR_TEST);
+   sceGuColorFunc(GU_NOTEQUAL, 0xFF, 0xFF);
+   sceGuStencilFunc(GU_ALWAYS,0x00,0xFF);
+   sceGuStencilOp(GU_REPLACE,GU_REPLACE,GU_REPLACE);
+
+   sceGuEnable(GU_BLEND);
+   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0x0,0x0);
+
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&spr_framecoords));
+
+//   goto send_frame;
+
+   sceGuStencilFunc(GU_EQUAL,0x00,0xFF);
+//   sceGuStencilOp(GU_KEEP,GU_REPLACE,GU_REPLACE);
+//   sceGuDisable(GU_STENCIL_TEST);
+   sceGuDisable(GU_COLOR_TEST);
+//   goto send_frame;
+
+   sceGuDisable(GU_BLEND);
+//   sceGuEnable(GU_BLEND);
+//   sceGuBlendFunc(GU_ADD, GU_ONE_MINUS_DST_ALPHA, GU_DST_ALPHA, 0,0);
+
+//   sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
+//   sceGuTexImage(0, 512, 256, 512, VDC_SPR_TEXTURE);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGBA);
+
+   sceGuClutMode(GU_PSM_5551, 0, 0xFF, 0);
+   sceGuClutLoad(32 , color_table_5551 + 0x100);
+   sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_5551 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * VDC_FRAME_SLICE_COUNT, NULL, (void*)(&spr_framecoords));
 
    goto send_frame;
 
@@ -1220,8 +1355,8 @@ send_frame:
    sceDisplaySetFrameBuf(VDC_FRAME_TEXTURE,512,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
    //    sceDisplaySetFrameBuf(VDC_BG_TEXTURE,256,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
    // //   sceDisplaySetFrameBuf(surf->pixels16,512,PSP_DISPLAY_PIXEL_FORMAT_5551,PSP_DISPLAY_SETBUF_NEXTFRAME);
-   //   sceGuSync(0,0);
-   //   sceDisplayWaitVblank();
+//      sceGuSync(0,0);
+//      sceDisplayWaitVblank();
 
 }
 
@@ -1250,12 +1385,23 @@ void VDC_Init(int sgx)
 
    vdc = (vdc_t *)MDFN_malloc(sizeof(vdc_t), "VDC");
 
-   //    color_table_5551[0x200] = 0x001F;
-   //    color_table_5551[0x201] = 0xFC00;
-   //    memset (VDC_BG_TEXTURE, 0xF0, VDC_TEXTURE_SIZE);
+   color_table_5551[0x200] = 0x001F;
+   for (int i=0x201;i<0x210;i++)
+       color_table_5551[i] = 0xFC00;
 
-   // sceKernelDcacheWritebackRange(&framecoords, sizeof(framecoords));
+//   memset (VDC_BG_TEXTURE, 0xF0, VDC_TEXTURE_SIZE);
 
+   sceKernelDcacheWritebackRange(color_table_5551 + 0x200, 16 * 2);
+//   sceKernelDcacheWritebackRange(&bg_framecoords, sizeof(bg_framecoords));
+   sceKernelDcacheWritebackRange(&spr_framecoords, sizeof(spr_framecoords));
+
+   if(!bg_texture_buffer)
+      bg_texture_buffer = (uint8_t*)malloc(VDC_TEXTURE_SIZE * sizeof(uint8_t));
+   if(!spr_texture_buffer)
+      spr_texture_buffer = (uint16_t*)malloc(VDC_TEXTURE_SIZE * sizeof(uint16_t));
+
+   update_coords(0, spr_framecoords);
+   update_coords(0, bg_framecoords);
 }
 
 void VDC_Close(void)
@@ -1283,7 +1429,7 @@ int VDC_StateAction(StateMem *sm, int load, int data_only)
 
    int ret = MDFNSS_StateAction(sm, load, data_only, VCE_StateRegs, "VCE");
 
-   int chip = 0;
+//   int chip = 0;
    {
       SFORMAT VDC_StateRegs[] =
       {

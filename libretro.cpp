@@ -1700,7 +1700,7 @@ void retro_run(void)
    unsigned height = spec.DisplayRect.h;
 
 #ifdef PSP
-//   video_cb(RETRO_HW_FRAME_BUFFER_VALID, width, height, FB_WIDTH << 1);
+   video_cb(RETRO_HW_FRAME_BUFFER_VALID, width, height, FB_WIDTH << 1);
 #else
    video_cb(surf->pixels16, width, height, FB_WIDTH << 1);
 #endif
