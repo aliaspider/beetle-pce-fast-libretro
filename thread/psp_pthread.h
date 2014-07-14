@@ -1,7 +1,8 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *  Copyright (C) 2011-2014 - Daniel De Matteis
- * 
+ *  Copyright (C) 2014      - Ali Bouhlel ( aliaspider@gmail.com )
+ *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
  *  ation, either version 3 of the License, or (at your option) any later version.
@@ -14,6 +15,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+// FIXME: unfinished, mutexes and condvars basically a stub.
 #ifndef _PSP_PTHREAD_WRAP__
 #define _PSP_PTHREAD_WRAP__
 
@@ -45,21 +47,14 @@ typedef struct
 
 static int psp_thread_wrap(SceSize args, void *argp)
 {
-   sthread_args_struct* sthread_args = argp;
-
-   printf("\n\n\n\n\n\nstarting thread\n\n\n\n\n\n");
-   fflush(stdout);
+   sthread_args_struct* sthread_args = (sthread_args_struct*)argp;
 
    return (int)sthread_args->start_routine(sthread_args->arg);
-
 }
 
 static inline int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void*), void *arg)
 {
    sprintf(name_buffer, "0x%08X", (uint32_t) thread);
-
-   printf("\n\n\n\n\n\ncreating thread %s\n\n\n\n\n\n",name_buffer);
-   fflush(stdout);
 
    *thread = sceKernelCreateThread(name_buffer,psp_thread_wrap, 0x20, STACKSIZE, 0, NULL);
 
@@ -84,14 +79,13 @@ static inline int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 static inline int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-//   sceKernelDelayThread(1);
-//   return sceKernelWaitSema(*mutex, 1, 0);
+   //FIXME: stub
    return 1;
 }
 
 static inline int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
@@ -107,7 +101,7 @@ static inline int pthread_join(pthread_t thread, void **retval)
 
 static inline int pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
@@ -119,35 +113,33 @@ static inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex
 
 static inline int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
 static inline int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
 static inline int pthread_cond_signal(pthread_cond_t *cond)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
 static inline int pthread_cond_broadcast(pthread_cond_t *cond)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
 
 static inline int pthread_cond_destroy(pthread_cond_t *cond)
 {
-//   sceKernelDelayThread(1);
+   //FIXME: stub
    return 1;
 }
-
-// empty stubs
 
 
 static inline int pthread_detach(pthread_t thread)
