@@ -22,15 +22,24 @@
 #include <pspkernel.h>
 #include <pspthreadman.h>
 #include <pspthreadman_kernel.h>
+#include <time.h>
 #include <stdio.h>
 
 #define STACKSIZE (64 * 1024)
+#define PSP_PTHREAD_ERROR     (-1)
+#define PSP_PTHREAD_SUCCESS   0
+
+#ifdef EBUSY
+#define PSP_PTHREAD_EBUSY   EBUSY
+#else
+#define PSP_PTHREAD_EBUSY   16
+#endif
 
 typedef SceUID pthread_t;
 typedef SceUID pthread_mutex_t;
 typedef void* pthread_mutexattr_t;
 typedef int pthread_attr_t;
-typedef SceUID pthread_cond_t;
+typedef int pthread_cond_t;
 typedef SceUID pthread_condattr_t;
 
 // use pointer values to create unique names for threads/mutexes
@@ -62,7 +71,7 @@ static inline int pthread_create(pthread_t *thread, const pthread_attr_t *attr, 
    sthread_args.arg = arg;
    sthread_args.start_routine = start_routine;
 
-   return sceKernelStartThread(*thread, sizeof(sthread_args), &sthread_args);
+   return (sceKernelStartThread(*thread, sizeof(sthread_args), &sthread_args) < 0)? PSP_PTHREAD_ERROR : PSP_PTHREAD_SUCCESS;
 }
 
 static inline int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
@@ -79,77 +88,87 @@ static inline int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 static inline int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-   //FIXME: stub
-   return 1;
+   return (sceKernelWaitSema(*mutex, 1, NULL) < 0)? PSP_PTHREAD_ERROR : PSP_PTHREAD_SUCCESS;
 }
 
 static inline int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
-   //FIXME: stub
-   return 1;
+   return (sceKernelSignalSema(*mutex, 1) < 0)? PSP_PTHREAD_ERROR : PSP_PTHREAD_SUCCESS;
 }
 
 
 static inline int pthread_join(pthread_t thread, void **retval)
 {
-   SceUInt timeout = (SceUInt)-1;
-   sceKernelWaitThreadEnd(thread, &timeout);
-   int exit_status = sceKernelGetThreadExitStatus(thread);
+   sceKernelWaitThreadEnd(thread, NULL);
+   *retval = (void*) sceKernelGetThreadExitStatus(thread); // possibly a bad idea, sceKernelGetThreadExitStatus is an int and pthread uses void* for retval.
    sceKernelDeleteThread(thread);
-   return exit_status;
+   return 0;
 }
 
 static inline int pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-   //FIXME: stub
-   return 1;
+   SceUInt timeout = 0;
+   return (sceKernelWaitSema(*mutex, 1, &timeout) < 0)? PSP_PTHREAD_EBUSY : PSP_PTHREAD_SUCCESS;
 }
 
 static inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex)
 {
-   sceKernelDelayThread(10000);
-   return 1;
+   u32 outbits;
+   sceKernelSignalSema(*mutex, 1);
+   sceKernelWaitEventFlag(*cond, 0x1, PSP_EVENT_WAITOR, &outbits, NULL);
+   sceKernelWaitSema(*mutex, 1, NULL);
+   return 0;
 }
 
 static inline int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
 {
-   //FIXME: stub
+   u32 outbits;
+   SceUInt timeout = abstime->tv_sec * 1000000 + abstime->tv_nsec / 1000;
+   SceUInt remaining_timeout = timeout;
+
+   sceKernelSignalSema(*mutex, 1);
+   sceKernelWaitEventFlag(*cond, 0x1, PSP_EVENT_WAITOR, &outbits, &timeout);
+   sceKernelSetEventFlag(*cond, 0x0);
+
+   remaining_timeout -= timeout;
+   sceKernelWaitSema(*mutex, 1, &remaining_timeout);
    return 1;
 }
 
 static inline int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr)
 {
-   //FIXME: stub
-   return 1;
+   sprintf(name_buffer, "0x%08X", (uint32_t) cond);
+   *cond = sceKernelCreateEventFlag(name_buffer, 0, 0, NULL);
+   return (cond < 0)? PSP_PTHREAD_ERROR : PSP_PTHREAD_SUCCESS;
 }
 
 static inline int pthread_cond_signal(pthread_cond_t *cond)
 {
-   //FIXME: stub
+   sceKernelSetEventFlag(*cond, 0x1);
    return 1;
 }
 
 static inline int pthread_cond_broadcast(pthread_cond_t *cond)
 {
-   //FIXME: stub
+   sceKernelSetEventFlag(*cond, 0x1);
    return 1;
 }
 
 static inline int pthread_cond_destroy(pthread_cond_t *cond)
 {
-   //FIXME: stub
+   sceKernelDeleteEventFlag(*cond);
    return 1;
 }
 
 
 static inline int pthread_detach(pthread_t thread)
 {
-   return 1;
+   return 0;
 }
 
 static inline void pthread_exit(void *retval)
 {
-   (void)retval;
+   sceKernelExitDeleteThread((int) retval);
 }
 
 #endif //_PSP_PTHREAD_WRAP__
